@@ -1,0 +1,7 @@
+name: default
+filters:
+  - "true"
+decisions:
+  - type: ban
+    duration: 4h
+on_success: break

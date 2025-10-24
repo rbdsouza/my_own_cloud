@@ -1,0 +1,3 @@
+lan_host = "edgebox.local"
+timezone = "America/Sao_Paulo"
+postgres_password = "changeme"

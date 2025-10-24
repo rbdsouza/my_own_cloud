@@ -1,0 +1,15 @@
+[Unit]
+Description=EdgeBox Docker Compose Stack
+After=network-online.target docker.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+WorkingDirectory=/opt/edgebox
+ExecStart=/usr/bin/docker compose --profile core --profile wifi up -d
+ExecStartPost=/usr/bin/docker compose --profile apps up -d
+RemainAfterExit=yes
+TimeoutStartSec=0
+
+[Install]
+WantedBy=multi-user.target

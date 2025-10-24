@@ -1,0 +1,71 @@
+server:
+  port: 8080
+  shutdown: graceful
+  compression:
+    enabled: true
+  http2:
+    enabled: true
+spring:
+  application:
+    name: edgebox-svc
+  threads:
+    virtual:
+      enabled: true
+  datasource:
+    hikari:
+      maximum-pool-size: 5
+      minimum-idle: 1
+      idle-timeout: 30000
+      max-lifetime: 1800000
+      connection-timeout: 20000
+  jackson:
+    serialization:
+      WRITE_DATES_AS_TIMESTAMPS: false
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics,prometheus
+  metrics:
+    tags:
+      application: ${spring.application.name}
+
+---
+spring:
+  config:
+    activate:
+      on-profile: workstation
+  datasource:
+    url: jdbc:postgresql://localhost:5432/${POSTGRES_DB:microdb}
+    username: ${POSTGRES_USER:micro}
+    password: ${POSTGRES_PASSWORD:changeme}
+
+---
+spring:
+  config:
+    activate:
+      on-profile: compose
+  datasource:
+    url: jdbc:postgresql://postgres:5432/${POSTGRES_DB:microdb}
+    username: ${POSTGRES_USER:micro}
+    password: ${POSTGRES_PASSWORD:changeme}
+
+---
+spring:
+  config:
+    activate:
+      on-profile: k3s
+  datasource:
+    url: jdbc:postgresql://edgebox-postgres:5432/${POSTGRES_DB:microdb}
+    username: ${POSTGRES_USER:micro}
+    password: ${POSTGRES_PASSWORD:changeme}
+
+---
+spring:
+  config:
+    activate:
+      on-profile: onprem-prod
+  datasource:
+    url: jdbc:postgresql://${EDGEBOX_DB_HOST:postgres}:${EDGEBOX_DB_PORT:5432}/${POSTGRES_DB:microdb}
+    username: ${POSTGRES_USER:micro}
+    password: ${POSTGRES_PASSWORD:changeme}
