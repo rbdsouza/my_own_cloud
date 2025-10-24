@@ -1,0 +1,12 @@
+traefik:v3.1
+portainer/portainer-ce:2.21.4
+postgres:16-alpine
+grafana/grafana:11.0.0
+filebrowser/filebrowser:v2.30.0
+nginx:1.27-alpine
+authelia/authelia:latest
+crowdsecurity/crowdsec:latest
+fbonalair/traefik-crowdsec-bouncer:latest
+falcosecurity/falco-no-driver:latest
+cloudflare/cloudflared:latest
+ghcr.io/balenalabs/wifi-connect:latest

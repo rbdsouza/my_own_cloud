@@ -1,0 +1,10 @@
+# The admin password must be stored as an Argon2id hash. Replace the placeholder
+# with the output of `docker compose exec authelia authelia hash-password '<NEW>'`
+# before enabling the security profile in production.
+users:
+  admin:
+    displayname: EdgeBox Admin
+    password: "$argon2id$v=19$m=65536,t=3,p=4$QWxlZ1dob1RaRWZKS3JsSw$XpPOjISiFDUFxIr05oig3NbS1Ry6j3Tz6kKIhxX3sNA"
+    email: admin@edgebox.local
+    groups:
+      - admins

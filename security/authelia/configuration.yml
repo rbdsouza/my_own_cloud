@@ -1,0 +1,49 @@
+---
+server:
+  address: 'tcp://0.0.0.0:9091'
+log:
+  level: info
+jwt_secret: "${AUTHELIA_JWT_SECRET}"
+default_redirection_url: https://auth.${LAN_HOST}
+
+totp:
+  issuer: EdgeBox
+
+access_control:
+  default_policy: deny
+  rules:
+    - domain: '*.edgebox.local'
+      subject:
+        - group: admins
+      policy: two_factor
+
+session:
+  name: edgebox_session
+  secret: "${AUTHELIA_SESSION_SECRET}"
+  expiration: 1h
+  inactivity: 15m
+  domain: edgebox.local
+
+storage:
+  encryption_key: "${AUTHELIA_STORAGE_SECRET}"
+  local:
+    path: /config/db.sqlite3
+
+authentication_backend:
+  file:
+    path: /config/users_database.yml
+    watch: true
+    password:
+      algorithm: argon2id
+      iterations: 3
+      key_length: 32
+      salt_length: 16
+      parallelism: 4
+
+notifier:
+  filesystem:
+    filename: /config/notification.txt
+
+identity_validation:
+  reset_password:
+    jwt_secret: "${AUTHELIA_JWT_SECRET}"

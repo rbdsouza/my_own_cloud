@@ -1,0 +1,18 @@
+{
+  "version": "2",
+  "templates": [
+    {
+      "type": 1,
+      "title": "EdgeBox Grafana",
+      "description": "Grafana dashboard preconfigured for EdgeBox metrics.",
+      "note": "Requires grafana profile to be running.",
+      "categories": ["monitoring"],
+      "platform": "linux",
+      "logo": "https://grafana.com/static/assets/img/fav32.png",
+      "repository": {
+        "url": "https://github.com/grafana/grafana-docker",
+        "stackfile": "Dockerfile"
+      }
+    }
+  ]
+}

@@ -1,0 +1,6 @@
+.env
+.env.sops
+logs/traefik/access.log
+terraform/.terraform/
+terraform/terraform.tfstate*
+__pycache__/

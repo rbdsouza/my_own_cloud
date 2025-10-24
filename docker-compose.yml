@@ -1,0 +1,327 @@
+version: "3.9"
+
+x-default-opts: &default-opts
+  restart: unless-stopped
+  security_opt:
+    - no-new-privileges:true
+  cap_drop:
+    - ALL
+  read_only: true
+  tmpfs:
+    - /tmp
+  logging:
+    driver: json-file
+    options:
+      max-size: 10m
+      max-file: "3"
+
+x-networks:
+  default: &edgebox-network
+    name: edgebox
+    driver: bridge
+
+services:
+  traefik:
+    <<: *default-opts
+    image: traefik:v3.1
+    command:
+      - --providers.docker=true
+      - --providers.docker.exposedbydefault=false
+      - --entrypoints.web.address=:80
+      - --entrypoints.websecure.address=:443
+      - --log.level=INFO
+      - --accesslog=true
+      - --accesslog.filepath=/logs/access.log
+      - --api.dashboard=true
+      - --experimental.plugins.crowdsec.moduleName=github.com/maxlerebourg/crowdsec-bouncer-traefik
+      - --experimental.plugins.crowdsec.version=v1.4.0
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - ./logs/traefik:/logs
+    labels:
+      - traefik.enable=true
+      - traefik.http.middlewares.secure-headers.headers.stsSeconds=31536000
+      - traefik.http.middlewares.secure-headers.headers.forceSTSHeader=true
+      - traefik.http.middlewares.secure-headers.headers.stsIncludeSubdomains=true
+      - traefik.http.middlewares.secure-headers.headers.stsPreload=true
+      - traefik.http.middlewares.secure-headers.headers.browserXssFilter=true
+      - traefik.http.middlewares.secure-headers.headers.frameDeny=true
+      - traefik.http.middlewares.secure-headers.headers.referrerPolicy=no-referrer
+      - traefik.http.middlewares.secure-headers.headers.contentTypeNosniff=true
+      - traefik.http.middlewares.ratelimit.ratelimit.average=80
+      - traefik.http.middlewares.ratelimit.ratelimit.burst=120
+      - traefik.http.middlewares.ratelimit.ratelimit.period=1s
+      - traefik.http.middlewares.authelia.forwardauth.address=http://authelia:9091/api/verify?rd=https://auth.${LAN_HOST}
+      - traefik.http.middlewares.authelia.forwardauth.trustForwardHeader=true
+      - traefik.http.middlewares.authelia.forwardauth.authResponseHeaders=Remote-User,Remote-Groups,Remote-Name,Remote-Email
+      - traefik.http.middlewares.crowdsec.plugin.crowdsec.forwardauth.address=http://crowdsec-traefik-bouncer:8080/v1/forwardAuth
+      - traefik.http.middlewares.crowdsec.plugin.crowdsec.forwardauth.trustForwardHeader=true
+      - traefik.http.routers.api.rule=Host(`traefik.${LAN_HOST}`)
+      - traefik.http.routers.api.entrypoints=web
+      - traefik.http.routers.api.service=api@internal
+      - traefik.http.routers.api.middlewares=crowdsec@docker,authelia@docker,secure-headers@docker,ratelimit@docker
+    environment:
+      - LAN_HOST=${LAN_HOST}
+    profiles:
+      - core
+    networks:
+      - *edgebox-network
+
+  templates:
+    <<: *default-opts
+    image: nginx:1.27-alpine
+    volumes:
+      - ./templates:/usr/share/nginx/html:ro
+    labels:
+      - traefik.enable=true
+      - traefik.http.routers.templates.rule=Host(`templates.${LAN_HOST}`)
+      - traefik.http.routers.templates.entrypoints=web
+      - traefik.http.routers.templates.middlewares=secure-headers@docker,ratelimit@docker
+    profiles:
+      - core
+    networks:
+      - *edgebox-network
+
+  portainer:
+    <<: *default-opts
+    image: portainer/portainer-ce:2.21.4
+    command: -H unix:///var/run/docker.sock
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - portainer-data:/data
+    labels:
+      - traefik.enable=true
+      - traefik.http.routers.portainer.rule=Host(`portainer.${LAN_HOST}`)
+      - traefik.http.routers.portainer.entrypoints=web
+      - traefik.http.routers.portainer.middlewares=crowdsec@docker,authelia@docker,secure-headers@docker,ratelimit@docker
+    profiles:
+      - core
+    networks:
+      - *edgebox-network
+
+  postgres:
+    <<: *default-opts
+    image: postgres:16-alpine
+    environment:
+      - POSTGRES_USER=${POSTGRES_USER}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
+      - POSTGRES_DB=${POSTGRES_DB}
+      - TZ=${TZ}
+      - PGTZ=${TZ}
+      - POSTGRES_INITDB_ARGS=--auth=scram-sha-256
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER}"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+    read_only: false
+    tmpfs: []
+    profiles:
+      - apps
+    networks:
+      - *edgebox-network
+
+  grafana:
+    <<: *default-opts
+    image: grafana/grafana:11.0.0
+    environment:
+      - GF_SECURITY_ADMIN_USER=admin
+      - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_ADMIN_PASSWORD}
+      - GF_SERVER_ROOT_URL=%(protocol)s://grafana.${LAN_HOST}/
+    volumes:
+      - grafana-data:/var/lib/grafana
+    labels:
+      - traefik.enable=true
+      - traefik.http.routers.grafana.rule=Host(`grafana.${LAN_HOST}`)
+      - traefik.http.routers.grafana.entrypoints=web
+      - traefik.http.routers.grafana.middlewares=crowdsec@docker,authelia@docker,secure-headers@docker,ratelimit@docker
+    depends_on:
+      - postgres
+    read_only: false
+    profiles:
+      - apps
+    networks:
+      - *edgebox-network
+
+  signage-files:
+    <<: *default-opts
+    image: filebrowser/filebrowser:v2.30.0
+    environment:
+      - FB_BASEURL=
+    volumes:
+      - signage-data:/srv
+      - ./signage/default:/srv/default:ro
+      - filebrowser-db:/database
+    labels:
+      - traefik.enable=true
+      - traefik.http.routers.signage-files.rule=Host(`files.${LAN_HOST}`)
+      - traefik.http.routers.signage-files.entrypoints=web
+      - traefik.http.routers.signage-files.middlewares=crowdsec@docker,authelia@docker,secure-headers@docker,ratelimit@docker
+    read_only: false
+    profiles:
+      - apps
+    networks:
+      - *edgebox-network
+
+  signage:
+    <<: *default-opts
+    image: nginx:1.27-alpine
+    volumes:
+      - signage-data:/usr/share/nginx/html:ro
+    labels:
+      - traefik.enable=true
+      - traefik.http.routers.signage.rule=Host(`sign.${LAN_HOST}`)
+      - traefik.http.routers.signage.entrypoints=web
+      - traefik.http.routers.signage.middlewares=secure-headers@docker,ratelimit@docker
+    profiles:
+      - apps
+    networks:
+      - *edgebox-network
+
+  peoplecounter:
+    <<: *default-opts
+    build: ./peoplecounter
+    devices:
+      - "/dev/video0:/dev/video0"
+    environment:
+      - DATABASE_URL=postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
+      - TZ=${TZ}
+    depends_on:
+      - postgres
+    labels:
+      - traefik.enable=true
+      - traefik.http.routers.peoplecounter.rule=Host(`counter.${LAN_HOST}`)
+      - traefik.http.routers.peoplecounter.entrypoints=web
+      - traefik.http.routers.peoplecounter.middlewares=secure-headers@docker,ratelimit@docker
+    profiles:
+      - apps
+    networks:
+      - *edgebox-network
+
+  edgebox-svc:
+    <<: *default-opts
+    build: ./edgebox-svc
+    environment:
+      - SPRING_PROFILES_ACTIVE=compose
+      - SPRING_DATASOURCE_URL=jdbc:postgresql://postgres:5432/${POSTGRES_DB}
+      - SPRING_DATASOURCE_USERNAME=${POSTGRES_USER}
+      - SPRING_DATASOURCE_PASSWORD=${POSTGRES_PASSWORD}
+      - TZ=${TZ}
+    depends_on:
+      - postgres
+    labels:
+      - traefik.enable=true
+      - traefik.http.routers.edgebox.rule=Host(`api.${LAN_HOST}`)
+      - traefik.http.routers.edgebox.entrypoints=web
+      - traefik.http.routers.edgebox.middlewares=secure-headers@docker,ratelimit@docker
+    profiles:
+      - apps
+    networks:
+      - *edgebox-network
+
+  wifi-portal:
+    image: ghcr.io/balenalabs/wifi-connect:latest
+    privileged: true
+    network_mode: host
+    environment:
+      - PORTAL_SSID=${WIFI_AP_SSID}
+      - PORTAL_PASSPHRASE=${WIFI_AP_PSK}
+      - PORTAL_COUNTRY=${WIFI_COUNTRY}
+    volumes:
+      - /var/run/dbus:/var/run/dbus
+    restart: unless-stopped
+    profiles:
+      - wifi
+
+  authelia:
+    <<: *default-opts
+    image: authelia/authelia:latest
+    volumes:
+      - ./security/authelia:/config
+    environment:
+      - TZ=${TZ}
+      - AUTHELIA_JWT_SECRET=${AUTHELIA_JWT_SECRET}
+      - AUTHELIA_SESSION_SECRET=${AUTHELIA_SESSION_SECRET}
+      - AUTHELIA_STORAGE_ENCRYPTION_KEY=${AUTHELIA_STORAGE_SECRET}
+      - AUTHELIA_IDENTITY_VALIDATION_RESET_PASSWORD_JWT_SECRET=${AUTHELIA_JWT_SECRET}
+    labels:
+      - traefik.enable=true
+      - traefik.http.routers.authelia.rule=Host(`auth.${LAN_HOST}`)
+      - traefik.http.routers.authelia.entrypoints=web
+      - traefik.http.routers.authelia.middlewares=secure-headers@docker,ratelimit@docker
+    profiles:
+      - security
+    networks:
+      - *edgebox-network
+
+  crowdsec:
+    <<: *default-opts
+    image: crowdsecurity/crowdsec:latest
+    environment:
+      - TZ=${TZ}
+    volumes:
+      - ./security/crowdsec/acquis.yaml:/etc/crowdsec/acquis.yaml:ro
+      - ./security/crowdsec/profiles.yaml:/etc/crowdsec/profiles.yaml:ro
+      - crowdsec-data:/var/lib/crowdsec/data
+      - ./logs/traefik:/logs/traefik:ro
+    read_only: false
+    profiles:
+      - security
+    networks:
+      - *edgebox-network
+
+  crowdsec-traefik-bouncer:
+    <<: *default-opts
+    image: fbonalair/traefik-crowdsec-bouncer:latest
+    environment:
+      - CROWDSEC_BOUNCER_API_KEY=${CROWDSEC_BOUNCER_API_KEY}
+      - CROWDSEC_BOUNCER_API_URL=http://crowdsec:8080/
+    profiles:
+      - security
+    networks:
+      - *edgebox-network
+
+  falco:
+    image: falcosecurity/falco-no-driver:latest
+    privileged: true
+    pid: host
+    network_mode: host
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - /proc:/host/proc:ro
+      - /boot:/host/boot:ro
+      - /lib/modules:/host/lib/modules:ro
+      - /usr:/host/usr:ro
+    environment:
+      - FALCO_HOSTNAME_EDGEBOX=edgebox
+    restart: unless-stopped
+    profiles:
+      - security
+
+  cloudflared:
+    <<: *default-opts
+    image: cloudflare/cloudflared:latest
+    command: tunnel run
+    environment:
+      - TUNNEL_TOKEN=${CLOUDFLARE_TUNNEL_TOKEN}
+    profiles:
+      - remote
+    networks:
+      - *edgebox-network
+
+volumes:
+  portainer-data:
+  postgres-data:
+  grafana-data:
+  signage-data:
+  filebrowser-db:
+  crowdsec-data:
+
+networks:
+  edgebox:
+    driver: bridge
